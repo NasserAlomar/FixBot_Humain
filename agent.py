@@ -9,9 +9,11 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import anthropic
+import httpx2
 from dotenv import load_dotenv
 
 from scenarios import SCENARIOS
@@ -21,6 +23,10 @@ from toolbox import Toolbox
 DEV_MODEL = "claude-haiku-5-5"
 EVAL_MODEL = "claude-sonnet-5-5"
 MAX_STEPS = 15
+# A normal turn takes 2-10s, but some requests hang without a response; give up
+# on them quickly and retry instead of waiting minutes.
+REQUEST_TIMEOUT = anthropic.Timeout(40.0, connect=10.0)
+API_ATTEMPTS = 4
 # Models that accept server-side refusal fallbacks (Haiku has none).
 FALLBACK_MODELS = {"claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1"}
 REPORTS_DIR = Path(__file__).parent / "reports"
@@ -123,6 +129,31 @@ def _create(client, model, effort, system_prompt, tools, messages):
     return client.messages.create(**kwargs)
 
 
+def make_client():
+    """Anthropic client that connects over IPv4. On some networks the IPv6
+    route to the API stalls for seconds or hangs; IPv4 is consistently fast.
+    Set FIXBOT_IPV6=1 to use the default dual-stack behavior."""
+    if os.environ.get("FIXBOT_IPV6") == "1":
+        return anthropic.Anthropic()
+    transport = httpx2.HTTPTransport(local_address="0.0.0.0", retries=2)
+    return anthropic.Anthropic(http_client=anthropic.DefaultHttpxClient(transport=transport))
+
+
+def _create_with_retry(client, log, *args):
+    """Like _create, but retries hung, dropped, rate-limited or 5xx requests
+    itself so each retry shows up in the log."""
+    client = client.with_options(timeout=REQUEST_TIMEOUT, max_retries=0)
+    for attempt in range(1, API_ATTEMPTS + 1):
+        try:
+            return _create(client, *args)
+        except (anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.InternalServerError) as e:
+            if attempt == API_ATTEMPTS:
+                raise
+            reason = "timed out" if isinstance(e, anthropic.APITimeoutError) else type(e).__name__
+            log(f"API call {reason}, retrying ({attempt}/{API_ATTEMPTS - 1})...")
+            time.sleep(min(2 ** attempt, 10))
+
+
 def _short(text, n=160):
     text = " ".join(str(text).split())
     return text if len(text) <= n else text[:n] + "..."
@@ -138,7 +169,7 @@ def run_agent(scenario, model=DEV_MODEL, approve=None, max_steps=MAX_STEPS,
     log: callable for progress lines (default: print when verbose).
     on_start: called with the live System once it is built (for UIs).
     """
-    client = client or anthropic.Anthropic(timeout=180.0, max_retries=3)
+    client = client or make_client()
     approve = approve or (lambda name, args: False)
     log = log or (print if verbose else (lambda *a, **k: None))
     disabled = frozenset(disabled) | (frozenset() if verify else {"health_check"})
@@ -159,7 +190,7 @@ def run_agent(scenario, model=DEV_MODEL, approve=None, max_steps=MAX_STEPS,
     step = 0
     while step <= max_steps and report is None:  # step max_steps+1 is a grace turn for the report
         step += 1
-        response = _create(client, model, effort, system_prompt, tools, messages)
+        response = _create_with_retry(client, log, model, effort, system_prompt, tools, messages)
         usage["input"] += response.usage.input_tokens
         usage["output"] += response.usage.output_tokens
         usage["cache_read"] += response.usage.cache_read_input_tokens or 0

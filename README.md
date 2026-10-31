@@ -60,6 +60,8 @@ python eval.py --model claude-haiku-5-5 --variants full --split dev   # cheaper 
 python test_simulator.py && python test_scenarios.py && python test_toolbox.py   # offline tests, no API
 ```
 
+**Network note.** The client connects to the API over IPv4. On the development network, the IPv6 route sometimes took 2–11s to connect or hung completely, which made some agent turns take minutes. Set `FIXBOT_IPV6=1` to use the default dual-stack behavior. A request that gets no answer within 40s is retried, and the retry shows up in the agent log.
+
 The model is a setting: `--model` (or the `FIXBOT_MODEL` env var). Development used `claude-haiku-5-5`; the final eval uses `claude-sonnet-5-5`.
 
 ## Scenarios

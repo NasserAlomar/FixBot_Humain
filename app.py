@@ -18,8 +18,8 @@ st.title("FixBot SecOps")
 
 def start_run(scenario, model):
     """Run the agent in a background thread; the page polls `run` for progress."""
-    run = {"log": [], "system": scenario.build(), "pending": None, "report": None,
-           "error": None, "done": False}
+    run = {"scenario": scenario.name, "model": model, "log": [], "system": scenario.build(),
+           "pending": None, "report": None, "error": None, "done": False}
 
     def approve(name, args):
         pending = {"name": name, "args": args, "event": threading.Event(), "ok": False}
@@ -62,6 +62,10 @@ with st.sidebar:
     model = st.selectbox("Model", [DEV_MODEL, EVAL_MODEL], disabled=running)
     scenario = SCENARIOS[scenario_name]
     st.caption(f"{scenario.type} · faults: {', '.join(scenario.faults)}")
+    # A finished run belongs to its scenario and model; picking others starts fresh.
+    if run and not running and (run["scenario"], run["model"]) != (scenario_name, model):
+        del st.session_state["run"]
+        run = None
     if not os.environ.get("ANTHROPIC_API_KEY"):
         st.error("ANTHROPIC_API_KEY is not set in .env")
     if st.button("Run", type="primary", disabled=running, use_container_width=True):
@@ -84,7 +88,7 @@ if run and run["pending"]:
         st.rerun()
 
 if run:
-    st.subheader("Agent log" + (" (running...)" if running else ""))
+    st.subheader(f"Agent log: {run['scenario']}" + (" (running...)" if running else ""))
     with st.container(height=380):
         for line in run["log"]:
             st.text(line)

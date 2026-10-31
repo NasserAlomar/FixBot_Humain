@@ -22,7 +22,7 @@ from pathlib import Path
 import anthropic
 from dotenv import load_dotenv
 
-from agent import EVAL_MODEL, MAX_STEPS, run_agent
+from agent import EVAL_MODEL, MAX_STEPS, make_client, run_agent
 from scenarios import (ATTACKER_NETWORKS, DEV_SCENARIOS, FAULTS, HELD_OUT_SCENARIOS,
                        ROOT_CAUSE_KEYWORDS, fix_matches)
 from simulator import SERVICE_NAMES, health_check
@@ -207,7 +207,7 @@ def main():
     needs_api = any(VARIANTS[v] is not None for v in args.variants)
     if needs_api and not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY is not set (put it in .env)")
-    client = anthropic.Anthropic(timeout=180.0, max_retries=4) if needs_api else None
+    client = make_client() if needs_api else None
 
     splits = SPLITS if args.split == "all" else {args.split: SPLITS[args.split]}
     jobs = [(v, s, split) for v in args.variants for split, ss in splits.items() for s in ss]
