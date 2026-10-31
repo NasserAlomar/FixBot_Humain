@@ -1,0 +1,4 @@
+anthropic
+python-dotenv
+streamlit
+pandas
